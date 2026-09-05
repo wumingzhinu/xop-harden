@@ -158,7 +158,7 @@ jobs:
           BT="$ANDROID_SDK_ROOT/build-tools/34.0.0"
           "$BT/zipalign" -f 4 hardened.apk hardened-aligned.apk
           "$BT/apksigner" sign --ks release.keystore \
-            --ks-pass "pass:$KS_PASS" --key-alias "$KEY_ALIAS" --key-pass "pass:$KEY_PASS" \
+            --ks-pass "pass:$KS_PASS" --ks-key-alias "$KEY_ALIAS" --ks-key-pass "pass:$KEY_PASS" \
             --out final.apk hardened-aligned.apk
           "$BT/apksigner" verify --verbose final.apk
           ls -lh final.apk
