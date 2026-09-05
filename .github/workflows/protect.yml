@@ -1,0 +1,188 @@
+name: XopProtector 加固
+
+# 手动触发：Actions → 本工作流 → Run workflow
+on:
+  workflow_dispatch:
+    inputs:
+      apk_url:
+        description: '可选：待加固 APK 的下载直链（留空则用 apk/ 目录里的文件）'
+        required: false
+        type: string
+      encrypted_input:
+        description: '输入是否 GPG 对称加密（是=*.gpg，否=明文 *.apk）'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      encrypt_output:
+        description: '输出是否用 GPG 对称加密（GPG_PASSPHRASE 加密成品）'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      profile:
+        description: '加固档位: balanced / industry / aggressive / perf / max'
+        required: false
+        default: 'max'
+        type: choice
+        options:
+          - balanced
+          - industry
+          - aggressive
+          - perf
+          - max
+
+permissions:
+  contents: read
+
+jobs:
+  harden:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 配置 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: 安装 Android 命令行工具
+        run: |
+          sudo mkdir -p /opt/android-sdk
+          sudo chown -R "$USER" /opt/android-sdk
+          curl -fsSL -o cmdtools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          unzip -q cmdtools.zip -d /tmp/cmdtools
+          mkdir -p /opt/android-sdk/cmdline-tools
+          mv /tmp/cmdtools/cmdline-tools /opt/android-sdk/cmdline-tools/latest
+          export ANDROID_SDK_ROOT=/opt/android-sdk
+          yes | /opt/android-sdk/cmdline-tools/latest/bin/sdkmanager --licenses >/dev/null 2>&1 || true
+          /opt/android-sdk/cmdline-tools/latest/bin/sdkmanager \
+            "platform-tools" "build-tools;34.0.0" >/dev/null
+          echo "ANDROID_SDK_ROOT=/opt/android-sdk" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=/opt/android-sdk" >> "$GITHUB_ENV"
+
+      - name: 准备输入文件（URL 或仓库内）
+        run: |
+          mkdir -p work && cd work
+          if [ -n "${{ inputs.apk_url }}" ]; then
+            echo "从 URL 下载..."
+            curl -fsSL -o raw_input "${{ inputs.apk_url }}"
+          else
+            cp "$GITHUB_WORKSPACE"/apk/* raw_input
+          fi
+          test -s raw_input || { echo "未找到输入文件"; exit 1; }
+          ls -lh raw_input
+
+      - name: 解密输入（对称加密，口令来自 Secret）
+        env:
+          GPG_PASS: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          cd work
+          if [ "${{ inputs.encrypted_input }}" = "true" ]; then
+            test -n "$GPG_PASS" || { echo "缺少 Secret: GPG_PASSPHRASE"; exit 1; }
+            echo "解密输入（gpg 对称解密）..."
+            echo "$GPG_PASS" | gpg --batch --yes --passphrase-fd 0 -d raw_input > input.apk
+            test -s input.apk || { echo "解密失败（口令错误？）"; exit 1; }
+          else
+            cp raw_input input.apk
+          fi
+          file input.apk
+          ls -lh input.apk
+          # 确认是 APK（zip 魔数）
+          head -c2 input.apk | od -An -tx1
+
+      - name: 下载 XopProtector 预编译引擎
+        run: |
+          cd work
+          curl -fsSL -o xop.zip \
+            https://github.com/xopJack/XopProtector/releases/download/v0.6.26/XopProtector-0.6.26-win-x64.zip
+          unzip -q xop.zip -d xop
+          PACKER_JAR=$(find xop -name 'protector-packer*.jar' | head -1)
+          SHELL_DIR=$(find xop -type d -name 'shell-files' | head -1)
+          test -n "$PACKER_JAR" || { echo "未找到 protector-packer.jar"; exit 1; }
+          test -n "$SHELL_DIR" || { echo "未找到 shell-files"; exit 1; }
+          echo "PACKER_JAR=$PACKER_JAR" >> "$GITHUB_ENV"
+          echo "SHELL_DIR=$SHELL_DIR" >> "$GITHUB_ENV"
+          echo "引擎: $PACKER_JAR"
+          echo "壳目录: $SHELL_DIR"
+
+      - name: 执行加固（profile=${{ inputs.profile }}）
+        run: |
+          cd work
+          java -jar "$PACKER_JAR" input.apk -o hardened.apk \
+            --shell-dir "$SHELL_DIR" \
+            --profile ${{ inputs.profile }}
+          test -s hardened.apk || { echo "加固失败"; exit 1; }
+          ls -lh hardened.apk
+
+      - name: 还原 keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then echo "缺少 Secret: KEYSTORE_BASE64"; exit 1; fi
+          echo "$KEYSTORE_B64" | base64 -d > work/release.keystore
+          chmod 600 work/release.keystore
+
+      - name: 对齐并重新签名
+        env:
+          KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          cd work
+          BT="$ANDROID_SDK_ROOT/build-tools/34.0.0"
+          "$BT/zipalign" -f 4 hardened.apk hardened-aligned.apk
+          "$BT/apksigner" sign --ks release.keystore \
+            --ks-pass "pass:$KS_PASS" --key-alias "$KEY_ALIAS" --key-pass "pass:$KEY_PASS" \
+            --out final.apk hardened-aligned.apk
+          "$BT/apksigner" verify --verbose final.apk
+          ls -lh final.apk
+
+      - name: 模拟器冒烟测试（确保加固后能打开）
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          disable-animations: true
+          script: |
+            adb install -r "$GITHUB_WORKSPACE/work/final.apk"
+            PKG=$(aapt dump badging "$GITHUB_WORKSPACE/work/final.apk" 2>/dev/null | \
+                  sed -n "s/^package: name='\([^']*\)'.*/\1/p")
+            LAUNCH=$(aapt dump badging "$GITHUB_WORKSPACE/work/final.apk" 2>/dev/null | \
+                     sed -n "s/^launchable-activity: name='\([^']*\)'.*/\1/p")
+            echo "包名=$PKG  主Activity=$LAUNCH"
+            test -n "$PKG" -a -n "$LAUNCH" || { echo "无法解析包名/主Activity"; exit 1; }
+            adb shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1
+            sleep 5
+            PID=$(adb shell pidof "$PKG" | tr -d '\r')
+            test -n "$PID" || { echo "应用启动后崩溃（进程不存在）"; adb logcat -d | tail -80; exit 1; }
+            echo "=== 启动成功，进程存活 PID=$PID ==="
+            adb shell dumpsys activity activities | grep -i "$PKG" | head -3
+
+      - name: 加密输出成品（对称加密，口令来自 Secret）
+        env:
+          GPG_PASS: ${{ secrets.GPG_PASSPHRASE }}
+        if: inputs.encrypt_output == 'true'
+        run: |
+          cd work
+          echo "$GPG_PASS" | gpg --batch --yes --passphrase-fd 0 \
+            -c --cipher-algo AES256 -o final.apk.gpg final.apk
+          test -s final.apk.gpg || { echo "加密失败"; exit 1; }
+          ls -lh final.apk.gpg
+          echo "artifact_name=hardened-apk-encrypted" >> "$GITHUB_ENV"
+
+      - name: 上传加固成品
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.artifact_name || 'hardened-apk' }}
+          path: |
+            work/final.apk
+            work/final.apk.gpg

@@ -1,0 +1,11 @@
+# 签名敏感文件，绝不提交
+keystore/
+release.keystore
+release.keystore.b64
+*.jks
+*.keystore
+KEYINFO.txt
+
+# 临时产物
+work/
+apk/*.apk
