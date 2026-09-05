@@ -133,11 +133,12 @@ jobs:
       - name: 执行加固（profile=${{ inputs.profile }}）
         run: |
           cd work
-          java -jar "$PACKER_JAR" input.apk -o hardened.apk \
+          # 用绝对路径，避免 packer 内部对相对输出路径调用 getParentFile() 时 NPE
+          java -jar "$PACKER_JAR" "$PWD/input.apk" -o "$PWD/hardened.apk" \
             --shell-dir "$SHELL_DIR" \
             --profile ${{ inputs.profile }}
-          test -s hardened.apk || { echo "加固失败"; exit 1; }
-          ls -lh hardened.apk
+          test -s "$PWD/hardened.apk" || { echo "加固失败"; exit 1; }
+          ls -lh "$PWD/hardened.apk"
 
       - name: 还原 keystore
         env:
