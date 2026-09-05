@@ -156,6 +156,12 @@ jobs:
         run: |
           cd work
           BT="$ANDROID_SDK_ROOT/build-tools/34.0.0"
+          echo "=== apksigner 诊断 ==="
+          ls -la "$BT"/apksigner* 2>&1
+          "$BT/apksigner" --version 2>&1 || true
+          "$BT/apksigner" --help 2>&1 | grep -iE "key|ks-pass" | head -10
+          echo "=== 签名密钥参数 ==="
+          echo "KS_PASS 长度=${#KS_PASS}  KEY_ALIAS=${KEY_ALIAS}  KEY_PASS 长度=${#KEY_PASS}"
           "$BT/zipalign" -f 4 hardened.apk hardened-aligned.apk
           "$BT/apksigner" sign --ks release.keystore \
             --ks-pass "pass:$KS_PASS" --ks-key-alias "$KEY_ALIAS" --ks-key-pass "pass:$KEY_PASS" \
