@@ -99,12 +99,28 @@ jobs:
           # 确认是 APK（zip 魔数）
           head -c2 input.apk | od -An -tx1
 
-      - name: 下载 XopProtector 预编译引擎
+      - name: 下载并解压 XopProtector 引擎
         run: |
           cd work
           curl -fsSL -o xop.zip \
             https://github.com/xopJack/XopProtector/releases/download/v0.6.26/XopProtector-0.6.26-win-x64.zip
-          unzip -q xop.zip -d xop
+          # 该 zip 用 Windows 反斜杠作路径分隔符，unzip 在 Linux 会平铺导致结构损坏，
+          # 故用 Python 解压并把 '\' 替换为 '/' 以恢复正确目录结构
+          python3 - xop.zip xop <<'PY'
+          import sys, os, zipfile
+          zf = zipfile.ZipFile(sys.argv[1])
+          root = sys.argv[2]
+          os.makedirs(root, exist_ok=True)
+          for name in zf.namelist():
+              safe = name.replace('\\', '/')
+              if safe.endswith('/'):
+                  os.makedirs(os.path.join(root, safe), exist_ok=True)
+                  continue
+              out = os.path.join(root, safe)
+              os.makedirs(os.path.dirname(out), exist_ok=True)
+              with open(out, 'wb') as f:
+                  f.write(zf.read(name))
+          PY
           PACKER_JAR=$(find xop -name 'protector-packer*.jar' | head -1)
           SHELL_DIR=$(find xop -type d -name 'shell-files' | head -1)
           test -n "$PACKER_JAR" || { echo "未找到 protector-packer.jar"; exit 1; }
