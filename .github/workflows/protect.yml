@@ -178,8 +178,8 @@ jobs:
           echo "=== 1. zip 结构完整性 ==="
           unzip -t final.apk > /dev/null && echo "zip 结构 OK"
           echo "=== 2. APK 可解析（包名/主Activity） ==="
-          PKG=$(aapt dump badging final.apk 2>/dev/null | sed -n "s/^package: name='\([^']*\)'.*/\1/p")
-          LAUNCH=$(aapt dump badging final.apk 2>/dev/null | sed -n "s/^launchable-activity: name='\([^']*\)'.*/\1/p")
+          PKG=$("$BT/aapt" dump badging final.apk 2>/dev/null | sed -n "s/^package: name='\([^']*\)'.*/\1/p")
+          LAUNCH=$("$BT/aapt" dump badging final.apk 2>/dev/null | sed -n "s/^launchable-activity: name='\([^']*\)'.*/\1/p")
           echo "包名=$PKG  主Activity=$LAUNCH"
           test -n "$PKG" -a -n "$LAUNCH" || { echo "无法解析包名/主Activity"; exit 1; }
           echo "=== 3. 签名验证 ==="
