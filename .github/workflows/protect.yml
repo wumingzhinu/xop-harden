@@ -159,10 +159,10 @@ jobs:
           # 对齐
           "$BT/zipalign" -f 4 hardened.apk hardened-aligned.apk
           # 用 JDK 自带 jarsigner 签名（apksigner 0.9 已损坏不可用）
+          # jarsigner 语法: jarsigner [options] <jar> <alias>，别名是末尾位置参数
           jarsigner -keystore release.keystore \
             -storepass "$KS_PASS" -keypass "$KEY_PASS" \
             -sigalg SHA256withRSA -digestalg SHA-256 \
-            -alias "$KEY_ALIAS" \
             hardened-aligned.apk "$KEY_ALIAS"
           cp hardened-aligned.apk final.apk
           # 验证
