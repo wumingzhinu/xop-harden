@@ -156,17 +156,17 @@ jobs:
         run: |
           cd work
           BT="$ANDROID_SDK_ROOT/build-tools/34.0.0"
-          echo "=== apksigner 诊断 ==="
-          ls -la "$BT"/apksigner* 2>&1
-          "$BT/apksigner" --version 2>&1 || true
-          "$BT/apksigner" --help 2>&1 | grep -iE "key|ks-pass" | head -10
-          echo "=== 签名密钥参数 ==="
-          echo "KS_PASS 长度=${#KS_PASS}  KEY_ALIAS=${KEY_ALIAS}  KEY_PASS 长度=${#KEY_PASS}"
+          # 对齐
           "$BT/zipalign" -f 4 hardened.apk hardened-aligned.apk
-          "$BT/apksigner" sign --ks release.keystore \
-            --ks-pass "pass:$KS_PASS" --ks-key-alias "$KEY_ALIAS" --ks-key-pass "pass:$KEY_PASS" \
-            --out final.apk hardened-aligned.apk
-          "$BT/apksigner" verify --verbose final.apk
+          # 用 JDK 自带 jarsigner 签名（apksigner 0.9 已损坏不可用）
+          jarsigner -keystore release.keystore \
+            -storepass "$KS_PASS" -keypass "$KEY_PASS" \
+            -sigalg SHA256withRSA -digestalg SHA-256 \
+            -alias "$KEY_ALIAS" \
+            hardened-aligned.apk "$KEY_ALIAS"
+          cp hardened-aligned.apk final.apk
+          # 验证
+          jarsigner -verify -verbose -certs final.apk 2>&1 | tail -6
           ls -lh final.apk
 
       - name: 模拟器冒烟测试（确保加固后能打开）
